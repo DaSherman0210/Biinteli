@@ -12,4 +12,6 @@ router.post("/", limiter , postTransport)
 router.delete("/:id", limiter , deleteTransport)
 router.patch("/:id", limiter , updateTransport)
 
+// The router is exported 
+
 export default router;

@@ -21,4 +21,6 @@ router.post("/", [
 router.delete("/:id", limiter , deleteFlight);
 router.patch("/:id", limiter , updateFlight);
 
+// The router is exported
+
 export default router;

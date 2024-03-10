@@ -2,22 +2,10 @@
 //I carried out the activity directly with the database, 
 //performing the necessary validations and functions for its proper use.
 
-
-/*import axios from "axios";*/
-/* const { origin, destination, maxFlights = Infinity } = req.body;
-
-const response = await axios.get("https://bitecingcom.ipage.com/testapi/avanzado.js");
-const data = response.data;
-
-const info = data.replace(/0,/g, "0");
-const arrayFixed = info.slice(0, -4) + info.slice(-1);
-const arrayJSON = JSON.parse(arrayFixed); */
-
-
-// I import the necessary modules to do the querys 
+// I import the necessary module to do the querys and axios to consume the API
 
 import Journey from "../models/Journey.js";
-import flight from "../models/Flight.js";
+import axios from "axios";
 
 // Basic get of all the journeys
 
@@ -34,22 +22,18 @@ const getJourney = async (req, res) => {
 
 const searchJourney = async (req, res) => {
     try {
-        // Extracting origin, destination, and maxFlights from request body
         const { origin, destination, maxFlights } = req.body;
 
-        // Checking if a cached journey exists for the provided origin and destination
         const cachedJourney = await cachedJourneyExists(origin, destination);
 
-        // If a cached journey exists, send it in the response
         if (cachedJourney) {
             res.json({ Journey: cachedJourney });
         } else {
-            // If no cached journey exists, find new journeys
-            const journeys = await findJourneys(origin, destination, [], maxFlights);
+            const flights = await findFlightsFromAPI(); // Función para obtener los vuelos de la API
 
-            // If new journeys are found
+            const journeys = await findJourneys(origin, destination, [], maxFlights, flights);
+
             if (journeys.length > 0) {
-                // Map each journey to include origin, destination, price, and flights
                 const journeysWithPrices = journeys.map(journey => ({
                     Origin: origin,
                     Destination: destination,
@@ -57,53 +41,36 @@ const searchJourney = async (req, res) => {
                     Flights: journey
                 }));
 
-                // Save the first journey with its price
                 await saveJourney(origin, destination, maxFlights, journeysWithPrices[0]);
 
-                // Send the first journey with its price in the response
                 res.json({ Journeys: journeysWithPrices[0] });
             } else {
-                // If no journeys are found, log a message and send a "Not Found" status code
                 console.log("No flights found for", origin, destination);
                 res.status(404).send("No flights found");
             }
         }
     } catch (error) {
-        // If an error occurs, log the error message and send an "Internal Server Error" status code
         console.log(error.message);
         res.status(500).send("Internal server error");
     }
 };
 
-
-const findJourneys = async (currentAirport, destination, visitedAirports, maxFlights) => {
-    // If maxFlights is 0, return an empty array
+const findJourneys = async (currentAirport, destination, visitedAirports, maxFlights, flights) => {
     if (maxFlights === 0) {
         return [];
     }
 
-    // Find flights departing from the current airport
-    const flights = await flight.find({ origin: currentAirport });
+    const relevantFlights = flights.filter(flight => flight.DepartureStation === currentAirport);
 
-    // Initialize an array to store journeys
     const journeys = [];
 
-    // Iterate over each flight departing from the current airport
-    for (const flight of flights) {
-        // Check if the destination airport has not been visited yet
-        if (!visitedAirports.includes(flight.destination)) {
-            // Create a new array of visited airports including the current airport
+    for (const flight of relevantFlights) {
+        if (!visitedAirports.includes(flight.ArrivalStation)) {
             const newVisitedAirports = [...visitedAirports, currentAirport];
-            
-            // If the flight's destination is the final destination
-            if (flight.destination === destination) {
-                // Add the flight to journeys array
+            if (flight.ArrivalStation === destination) {
                 journeys.push([flight]);
             } else {
-                // Recursively find sub-journeys to the destination
-                const subJourneys = await findJourneys(flight.destination, destination, newVisitedAirports, maxFlights - 1);
-                
-                // For each sub-journey found, prepend the current flight and add to journeys
+                const subJourneys = await findJourneys(flight.ArrivalStation, destination, newVisitedAirports, maxFlights - 1, flights);
                 for (const subJourney of subJourneys) {
                     journeys.push([flight, ...subJourney]);
                 }
@@ -111,8 +78,23 @@ const findJourneys = async (currentAirport, destination, visitedAirports, maxFli
         }
     }
 
-    // Return all found journeys
     return journeys;
+};
+
+const findFlightsFromAPI = async () => {
+    try {
+        const response = await axios.get("https://bitecingcom.ipage.com/testapi/intermedio.js");
+        const data = response.data;
+
+        const info = data.replace(/0,/g, "0");
+        const arrayFixed = info.slice(0, -4) + info.slice(-1);
+        const flights = JSON.parse(arrayFixed);
+
+        return flights;
+    } catch (error) {
+        console.error("Error while fetching flights from API:", error);
+        return [];
+    }
 };
 
 
@@ -120,7 +102,7 @@ const findJourneys = async (currentAirport, destination, visitedAirports, maxFli
 
 const cachedJourneyExists = async (origin, destination) => {
     try {
-        const journey = await Journey.findOne({ origin, destination }).populate('flights');
+        const journey = await Journey.findOne({ origin, destination });
         return journey;
     } catch (error) {
         console.error("Error while checking cached journey:", error);
@@ -136,7 +118,13 @@ const saveJourney = async (origin, destination, maxFlights, journeyData) => {
             origin,
             destination,
             price: journeyData.Price,
-            flights: journeyData.Flights.map(flight => flight._id) // Guardar solo los IDs de los vuelos
+            flights: journeyData.Flights.map(flight => ({
+                DepartureStation: flight.DepartureStation,
+                ArrivalStation: flight.ArrivalStation,
+                FlightCarrier: flight.FlightCarrier,
+                FlightNumber: flight.FlightNumber,
+                Price: flight.Price
+            }))
         });
         await journey.save();
         console.log("Journey saved successfully");
@@ -145,12 +133,13 @@ const saveJourney = async (origin, destination, maxFlights, journeyData) => {
     }
 };
 
+
 // This is to calculate the proce of all the journey
 
 const calculateTotalPrice = (journey) => {
     let totalPrice = 0;
     for (const flight of journey) {
-        totalPrice += flight.price;
+        totalPrice += flight.Price;
     }
     return totalPrice;
 };
